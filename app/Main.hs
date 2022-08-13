@@ -55,6 +55,7 @@ data Checkers = Checkers
   , _possibleMoves :: M.Map ((Int, Int), MoveDir) MoveType
   , _moving :: Maybe (Int, Int)
   , _victor :: Maybe Color
+  , _forceCapture :: Bool
   }
 $(makeLenses ''Checkers)
 
@@ -83,6 +84,7 @@ startCheckers = do
                , _possibleMoves = M.empty
                , _moving = Nothing
                , _victor = Nothing
+               , _forceCapture = True
                }
 
 allowedDirs :: Checker -> S.Set MoveDir
@@ -130,28 +132,30 @@ movePiece :: MonadState Checkers m => MoveDir -> m ()
 movePiece m = do
   pos <- view cursor <$> get
   moveType <- view (possibleMoves . at (pos, m)) <$> get
-  player <- view currentTurn <$> get
   piece <- view (board . at pos) <$> get
-  pos' <- case (moveType, piece) of
-    (Just Move, Just c) -> do
-      let newPos = moveOffset m pos
-      modify $ set (board . at newPos) (Just c)
-      modify $ set (board . at pos) Nothing
-      setCursorPos newPos
-      swapTurn
-      return newPos
-    (Just Capture, Just c) -> do
-      let capturePos = moveOffset m pos
-          newPos = moveOffset m capturePos
-      modify $ set (board . at newPos) (Just c)
-      modify $ set (board . at capturePos) Nothing
-      modify $ set (board . at pos) Nothing
-      setCursorPos newPos
-      modify $ set moving (Just newPos)
-      return newPos
-    _ -> return pos
-  when (view _2 pos' == upgradeRow player) $
-    modify $ set (board . at pos' . _Just . rank) King
+  case piece of
+    Just c -> do
+      pos' <- case moveType of
+        Just Move -> do
+          let newPos = moveOffset m pos
+          modify $ set (board . at newPos) (Just c)
+          modify $ set (board . at pos) Nothing
+          setCursorPos newPos
+          swapTurn
+          return newPos
+        Just Capture -> do
+          let capturePos = moveOffset m pos
+              newPos = moveOffset m capturePos
+          modify $ set (board . at newPos) (Just c)
+          modify $ set (board . at capturePos) Nothing
+          modify $ set (board . at pos) Nothing
+          setCursorPos newPos
+          modify $ set moving (Just newPos)
+          return newPos
+        _ -> return pos
+      when (view _2 pos' == upgradeRow (view team c)) $
+        modify $ set (board . at pos' . _Just . rank) King
+    Nothing -> return ()
   calculateMoves
   
 status :: Checkers -> String
@@ -184,7 +188,8 @@ calculateMoves = do
         M.filter ((== player) . view team) $
         M.filter (S.member mt . allowedDirs) $
           boardState
-  when forceCapture $ do
+  force <- view forceCapture <$> get
+  when force $ do
     newPossible <- view possibleMoves <$> get
     when (M.foldr ((||) . (== Capture)) False newPossible) $ do
       modify $ over possibleMoves $ M.filter (== Capture)
@@ -213,9 +218,6 @@ checkMove s m pos
         oopos = moveOffset m opos
         opos = moveOffset m pos
         active = view currentTurn s
-
-forceCapture :: Bool
-forceCapture = True
 
 inbounds :: (Int, Int) -> Bool
 inbounds = uncurry (&&) <<< p *** p
@@ -269,14 +271,12 @@ boardOrientation :: Int
 boardOrientation = 1
 
 drawCheckers :: Checkers -> Widget ()
-drawCheckers = vBox . sequence
-  [ C.center <<<
+drawCheckers = C.center <<<
     flip (borderWithLabel . str . status)
-      =<< hBox . (sequence $ fmap makeColumn $ range boardSize)
-  ]
+      =<< hBox . (sequence $ makeColumn <$> range boardSize)
 
 makeColumn :: Int -> Checkers -> Widget ()
-makeColumn x = vBox . (sequence $ fmap (makeSquare x) $ range boardSize)
+makeColumn x = vBox . (sequence $ makeSquare x <$> range boardSize)
 
 range :: Int -> [Int]
 range n = [0..n - 1]
@@ -298,7 +298,6 @@ makeSquare x y s =
       else case view (board . at (x, y)) s of
             Just piece -> drawPiece piece
             Nothing -> cell ' '
-
 
 squareAttr :: Int -> Int -> Checkers -> AttrName
 squareAttr = bgAttr <> fgAttr
@@ -336,7 +335,9 @@ teamAttr Black = attrName "team-b"
 
 rankChar :: Rank -> Char
 rankChar Pawn = '●'
-rankChar King = 'ö'
+-- rankChar King = 'ö'
+-- rankChar King = '⁕'
+rankChar King = '♦'
 
 cell :: Char -> Widget ()
 cell c = str $ " " <> (c : " ")
