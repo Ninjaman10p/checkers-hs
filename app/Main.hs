@@ -8,10 +8,12 @@ import Brick.BChan
 import qualified Brick.Widgets.Center as C
 import qualified Graphics.Vty as V
 import Data.Time.Clock
+import System.Environment
 
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
+import Data.List
 
 import Control.Monad
 import Control.Monad.State.Class
@@ -60,10 +62,34 @@ data Checkers = Checkers
 $(makeLenses ''Checkers)
 
 main :: IO ()
-main = startCheckers
+main = do
+  args <- getArgs
+  progName <- getProgName
+  if listContains "--help" args
+    then putStrLn $ helpMessage progName
+    else startCheckers $ toggleableVal True "force-capture" args
 
-startCheckers :: IO ()
-startCheckers = do
+listContains :: Eq a => a -> [a] -> Bool
+listContains a = foldr ((||) . (== a)) False
+
+helpMessage :: String -> String
+helpMessage progName = unlines
+  [ "Usage: " <> progName <> " [OPTIONS]"
+  , ""
+  , "Options:"
+  , "  --help: Print this message"
+  , "  --no-force-capture: disable force capture"
+  , "  --force-capture: enable force capture (default)"
+  ]
+  
+toggleableVal :: Bool -> String -> [String] -> Bool
+toggleableVal defVal name = foldl' (flip updateVal) defVal
+  where updateVal a | a == "--" <> name = const True
+                    | a == "--no-" <> name = const False
+                    | otherwise = id
+
+startCheckers :: Bool -> IO ()
+startCheckers force = do
   let builder = V.mkVty V.defaultConfig
   initialVty <- builder
   chan <- newBChan 10
@@ -84,7 +110,7 @@ startCheckers = do
                , _possibleMoves = M.empty
                , _moving = Nothing
                , _victor = Nothing
-               , _forceCapture = True
+               , _forceCapture = force
                }
 
 allowedDirs :: Checker -> S.Set MoveDir
