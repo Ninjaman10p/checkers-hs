@@ -237,7 +237,7 @@ checkMove s m pos
   | not . inbounds $ opos = Nothing
   | not . M.member opos $ boardState = Just Move
   | (view team <$> view (at opos) boardState) == Just (turnOver active)
-  && view (at oopos) boardState == Nothing
+  && isNothing (boardState^.at oopos)
   && inbounds oopos = Just Capture
   | otherwise = Nothing
   where boardState = view board s
@@ -280,7 +280,7 @@ moveCursor l n = do
 setCursorPos :: MonadState Checkers m => (Int, Int) -> m ()
 setCursorPos p = do
   let bounder = max 0 . min (boardSize - 1)
-      p' = (bounder *** bounder) $ p
+      p' = bounder *** bounder $ p
   modify $ set cursor p'
   modify $ set blinkOn True
   time <- view currentTime <$> get
@@ -298,11 +298,11 @@ boardOrientation = 1
 
 drawCheckers :: Checkers -> Widget ()
 drawCheckers = C.center <<<
-    flip (borderWithLabel . str . status)
-      =<< hBox . (sequence $ makeColumn <$> range boardSize)
+    (borderWithLabel . str . status)
+      <*> hBox . mapM makeColumn (range boardSize)
 
 makeColumn :: Int -> Checkers -> Widget ()
-makeColumn x = vBox . (sequence $ makeSquare x <$> range boardSize)
+makeColumn x = vBox . mapM (makeSquare x) (range boardSize)
 
 range :: Int -> [Int]
 range n = [0..n - 1]
@@ -331,26 +331,23 @@ squareAttr = bgAttr <> fgAttr
 bgAttr :: Int -> Int -> Checkers -> AttrName
 bgAttr x y s
   | pos == (x, y) && blink = attrName "selected"
-  | not blink && (S.member pos $ checkValidMove (x, y) s) = attrName "valid-move"
+  | not blink && S.member pos (checkValidMove (x, y) s) = attrName "valid-move"
   | mod (x + y) 2 == boardOrientation = attrName "white"
   | otherwise = mempty
   where blink = view blinkOn s
         pos = view cursor s
 
 fgAttr :: Int -> Int -> Checkers -> AttrName
-fgAttr x y = fromMaybe mempty . fmap (teamAttr . view team) . view (board . at (x, y))
+fgAttr x y = maybe mempty (teamAttr . view team) . view (board . at (x, y))
 
 checkValidMove :: (Int, Int) -> Checkers -> S.Set (Int, Int)
-checkValidMove pos s = foldr (S.union) S.empty $ do
+checkValidMove pos s = foldr S.union S.empty $ do
     dir <- allDirs
     let opos = moveOffset (switchDir dir) pos
         oopos = moveOffset (switchDir dir) opos
-    return $ S.fromList $ do
-      (p, movetype) <- [(opos, Move), (oopos, Capture)]
-      if view (at (p, dir)) moves == Just movetype
-        then [p]
-        else []
-  where moves = view possibleMoves s
+    return $ S.fromList $ fst <$>
+      filter (\(p, movetype) -> s^.possibleMoves.at (p, dir) == Just movetype)
+        [(opos, Move), (oopos, Capture)]
 
 drawPiece :: Checker -> Widget ()
 drawPiece = cell . rankChar . view rank
